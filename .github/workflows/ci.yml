@@ -360,10 +360,11 @@ jobs:
           if-no-files-found: ignore
 
   # Node x npm compatibility: a clean install, the tests and the build on every
-  # pairing users may run, on PRs into main and nightly. Every leg blocks CI Success.
+  # pairing users may run, on PRs into main or a release branch and nightly. Every
+  # leg blocks CI Success.
   compat:
     name: 🧬 Node ${{ matrix.node }} × npm ${{ matrix.npm }}
-    if: (github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')) && needs.setup.outputs.has-package == 'true'
+    if: (github.event_name == 'schedule' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || startsWith(github.base_ref, 'release/')))) && needs.setup.outputs.has-package == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [setup]
@@ -498,7 +499,7 @@ jobs:
             echo "| 🔎 Typecheck | $(ic "${R_TYPECHECK}") \`${R_TYPECHECK}\` |"
             echo "| 🧪 Test & coverage | $(ic "${R_TEST}") \`${R_TEST}\` |"
             echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
-            # The matrix runs only on PRs into main and nightly; elsewhere it is skipped and not listed.
+            # The matrix runs only on PRs into main or a release branch and nightly; elsewhere it is skipped and not listed.
             if [ "${R_COMPAT}" != "skipped" ]; then
               echo "| 🧬 Node 24/26 × npm 10/11/12 | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
             fi
