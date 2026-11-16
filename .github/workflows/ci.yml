@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The event keeps a push to main from cancelling the nightly run on main.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -414,7 +415,7 @@ jobs:
     name: 📋 CI Summary
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [security_checks, setup, lint, typecheck, test, build]
+    needs: [security_checks, setup, lint, typecheck, test, build, compat]
     if: always() && !cancelled()
     permissions:
       contents: read
@@ -440,6 +441,7 @@ jobs:
           R_TYPECHECK: ${{ needs.typecheck.result }}
           R_TEST: ${{ needs.test.result }}
           R_BUILD: ${{ needs.build.result }}
+          R_COMPAT: ${{ needs.compat.result }}
           BUILD_RAN: ${{ needs.build.outputs.build-ran }}
           LOCKFILE_OUTCOME: ${{ needs.setup.outputs.lockfile-outcome }}
           REF_NAME: ${{ github.head_ref || github.ref_name }}
@@ -496,6 +498,10 @@ jobs:
             echo "| 🔎 Typecheck | $(ic "${R_TYPECHECK}") \`${R_TYPECHECK}\` |"
             echo "| 🧪 Test & coverage | $(ic "${R_TEST}") \`${R_TEST}\` |"
             echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
+            # The matrix runs only on PRs into main and nightly; elsewhere it is skipped and not listed.
+            if [ "${R_COMPAT}" != "skipped" ]; then
+              echo "| 🧬 Node 24/26 × npm 10/11/12 | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
+            fi
             echo ""
             if [ "${BUILD_RAN}" = "true" ] && [ -f build.log ]; then
               echo "### 🏗️ Build output"
