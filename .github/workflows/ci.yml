@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop, staging, "release/**"]
     types: [opened, reopened, synchronize]
+  schedule:
+    # 03:00 UTC nightly on main, so a new Node or npm release shows up in compat.
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
@@ -356,15 +359,13 @@ jobs:
           if-no-files-found: ignore
 
   # Node x npm compatibility: a clean install, the tests and the build on every
-  # pairing users may run. Node 24 x npm 11 (the pinned .nvmrc and the npm it
-  # ships) blocks; the other legs report without blocking until they are green.
+  # pairing users may run, on PRs into main and nightly. Every leg blocks CI Success.
   compat:
     name: 🧬 Node ${{ matrix.node }} × npm ${{ matrix.npm }}
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' && needs.setup.outputs.has-package == 'true'
+    if: (github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')) && needs.setup.outputs.has-package == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [setup]
-    continue-on-error: ${{ !matrix.blocking }}
     permissions:
       contents: read
     strategy:
@@ -372,10 +373,6 @@ jobs:
       matrix:
         node: [24, 26]
         npm: [10, 11, 12]
-        include:
-          - node: 24
-            npm: 11
-            blocking: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
