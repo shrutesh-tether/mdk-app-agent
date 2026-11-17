@@ -6,12 +6,16 @@ on:
   pull_request:
     branches: [main, develop, staging, "release/**"]
     types: [opened, reopened, synchronize]
+  schedule:
+    # 03:00 UTC nightly on main, so a new Node or npm release shows up in compat.
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The event keeps a push to main from cancelling the nightly run on main.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -355,11 +359,64 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # Node x npm compatibility: a clean install, the tests and the build on every
+  # pairing users may run, on PRs into main or a release branch and nightly. Every
+  # leg blocks CI Success.
+  compat:
+    name: 🧬 Node ${{ matrix.node }} × npm ${{ matrix.npm }}
+    if: (github.event_name == 'schedule' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || startsWith(github.base_ref, 'release/')))) && needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [setup]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+        npm: [10, 11, 12]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node-version
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install npm ${{ matrix.npm }}
+        shell: bash
+        env:
+          NPM_MAJOR: ${{ matrix.npm }}
+        run: |
+          set -euo pipefail
+          npm install -g "npm@${NPM_MAJOR}" --no-audit --no-fund
+          echo "node $(node --version), npm $(npm --version)"
+
+      - name: Configure git auth for private dependencies
+        uses: ./.github/actions/setup-git-credentials
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+
+      # No node_modules cache: the install under this npm is what the leg tests.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
   summary:
     name: 📋 CI Summary
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [security_checks, setup, lint, typecheck, test, build]
+    needs: [security_checks, setup, lint, typecheck, test, build, compat]
     if: always() && !cancelled()
     permissions:
       contents: read
@@ -385,6 +442,7 @@ jobs:
           R_TYPECHECK: ${{ needs.typecheck.result }}
           R_TEST: ${{ needs.test.result }}
           R_BUILD: ${{ needs.build.result }}
+          R_COMPAT: ${{ needs.compat.result }}
           BUILD_RAN: ${{ needs.build.outputs.build-ran }}
           LOCKFILE_OUTCOME: ${{ needs.setup.outputs.lockfile-outcome }}
           REF_NAME: ${{ github.head_ref || github.ref_name }}
@@ -441,6 +499,10 @@ jobs:
             echo "| 🔎 Typecheck | $(ic "${R_TYPECHECK}") \`${R_TYPECHECK}\` |"
             echo "| 🧪 Test & coverage | $(ic "${R_TEST}") \`${R_TEST}\` |"
             echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
+            # The matrix runs only on PRs into main or a release branch and nightly; elsewhere it is skipped and not listed.
+            if [ "${R_COMPAT}" != "skipped" ]; then
+              echo "| 🧬 Node 24/26 × npm 10/11/12 | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
+            fi
             echo ""
             if [ "${BUILD_RAN}" = "true" ] && [ -f build.log ]; then
               echo "### 🏗️ Build output"
@@ -464,7 +526,7 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [security_checks, setup, lint, typecheck, test, build]
+    needs: [security_checks, setup, lint, typecheck, test, build, compat]
     if: always()
     permissions:
       contents: read
